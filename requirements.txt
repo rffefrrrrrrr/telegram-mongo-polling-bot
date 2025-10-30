@@ -1,5 +1,5 @@
 pyTelegramBotAPI
-pymongo
 segno
 requests
+pymongo
 Flask

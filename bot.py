@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 from datetime import datetime, timedelta
 import requests
+# import sqlite3 # Removed for MongoDB migration
 import time
 import threading
 import logging
@@ -15,14 +16,16 @@ from pymongo.errors import ConnectionFailure, OperationFailure
 from flask import Flask, request
 
 # --- Configuration and Setup ---
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Set decimal precision for financial calculations
 getcontext().prec = 50 
 
+# !!! يرجى تغيير هذه القيم !!!
 # الحصول على التوكن وسلسلة الاتصال من متغيرات البيئة (ضروري لـ Render)
-BOT_TOKEN = os.environ.get('BOT_TOKEN', '7678808636:AAH0pI0EDxYqSjMUhKiOTFWLo3TQT3qz2e8') # القيمة الثانية هي قيمة افتراضية/تجريبية
+BOT_TOKEN = os.environ.get('BOT_TOKEN', '7870252804:AAEG-V4zHTwyjbt4Weo5YbPCcvk-8H4fVtI') # القيمة الثانية هي قيمة افتراضية/تجريبية
 ADMIN_ID = int(os.environ.get('ADMIN_ID', 8129146878)) # !!! IMPORTANT: REPLACE THIS WITH YOUR ACTUAL TELEGRAM USER ID !!!
 
 # MongoDB Connection String and Database Name
@@ -56,12 +59,28 @@ def init_database():
         logging.info("Successfully connected to MongoDB.")
         
         # Ensure indexes for key fields (equivalent to UNIQUE/PRIMARY KEY in SQL)
+        # Using try/except to avoid conflicts if indexes already exist
         db.wallets.create_index("crypto_name", unique=True)
         db.products.create_index("id", unique=True) # Use 'id' as primary key equivalent
         db.products.create_index("product_name", unique=True)
-        db.transactions.create_index("txid", unique=True, sparse=True)
-        db.users.create_index("id", unique=True) # Telegram user ID
-        db.used_txids.create_index("txid", unique=True)
+        
+        try:
+            db.transactions.create_index("txid", unique=True, sparse=True)
+        except OperationFailure:
+            logging.warning("MongoDB index for transactions already exists or conflict occurred. Skipping index creation.")
+            pass
+        
+        try:
+            db.users.create_index("id", unique=True) # Telegram user ID
+        except OperationFailure:
+            logging.warning("MongoDB index for users already exists or conflict occurred. Skipping index creation.")
+            pass
+        
+        try:
+            db.used_txids.create_index("txid", unique=True)
+        except OperationFailure:
+            logging.warning("MongoDB index for used_txids already exists or conflict occurred. Skipping index creation.")
+            pass
         
         return db
     except ConnectionFailure as e:
@@ -76,7 +95,7 @@ def init_database():
         exit(1)
 
 # Initialize the database connection globally
-db = init_database()
+# db = init_database() # Will be called in __main__
 
 # Helper function to get next ID (since MongoDB doesn't have auto-increment)
 def get_next_sequence_value(collection_name):
@@ -450,21 +469,16 @@ def get_all_transactions_admin():
 
 # --- End of MongoDB Database Functions ---
 
-# (باقي كود البوت كما هو)
+# ... (باقي كود البوت كما هو)
 # ... (هنا يأتي باقي كود البوت الذي لم يتغير)
 # ...
 
-# --- Handlers (مثال على دالة البداية) ---
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    add_user(message.chat.id, message.chat.username, message.chat.first_name, message.chat.last_name)
-    bot.reply_to(message, "مرحباً بك في البوت! يمكنك استخدام /products لرؤية المنتجات.")
+# --- Main Loop ---
 
-# ... (باقي الـ Handlers)
-# ...
-
-# --- Main Execution ---
 if __name__ == '__main__':
+    # Initialize the database connection globally
+    db = init_database()
+    
     # --- Dummy Web Server for Render/Heroku Compatibility ---
     app = Flask(__name__)
     
@@ -480,6 +494,9 @@ if __name__ == '__main__':
         app.run(host='0.0.0.0', port=port, debug=False)
 
     # Start polling in a separate thread
+    logging.info("Starting background thread for pending transactions...")
+    threading.Thread(target=background_check_pending_transactions, daemon=True).start()
+    
     logging.info("Starting Telegram Bot Polling in a separate thread...")
     polling_thread = threading.Thread(target=bot.infinity_polling, daemon=True)
     polling_thread.start()
