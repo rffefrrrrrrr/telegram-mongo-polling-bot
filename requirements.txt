@@ -1,0 +1,5 @@
+pyTelegramBotAPI
+pymongo
+segno
+requests
+Flask
